@@ -3,22 +3,7 @@ function GravityGlovePull()
         return
     end
 
-    local class = thisEntity:GetClassname()
-    local player = Entities:GetLocalPlayer()
-    local startVector = player:EyePosition()
-    local eyetrace =
-    {
-        startpos = startVector;
-        endpos = startVector + RotatePosition(Vector(0,0,0), player:GetAngles(), Vector(1000,0,0));
-        ignore = player;
-        mask =  33636363
-    }
-    TraceLine(eyetrace)
-
-    if eyetrace.enthit ~= thisEntity then
-        return
-    end
-
+    -- We never pull these types of model
     local ignore_props = {
         "models/props/hazmat/hazmat_crate_lid.vmdl",
         "models/props/electric_box_door_1_32_48_front.vmdl",
@@ -46,29 +31,94 @@ function GravityGlovePull()
         "models/props_junk/wood_crate001a.vmdl",
         "models/props/desk_1_drawer_middle.vmdl",
     }
-    if thisEntity:GetName() == "peeled_corridor_objects" or class == "prop_reviver_heart" or vlua.find(ignore_props, thisEntity:GetModelName()) == nil and player:Attribute_GetIntValue("gravity_gloves", 0) == 1 and (class == "prop_physics" or class == "item_hlvr_health_station_vial" or class == "item_hlvr_grenade_frag" or class == "item_item_crate" or class == "item_healthvial" or class == "item_hlvr_crafting_currency_small" or class == "item_hlvr_crafting_currency_large" or class == "item_hlvr_clip_shotgun_single" or class == "item_hlvr_clip_shotgun_multiple" or class == "item_hlvr_clip_rapidfire" or class == "item_hlvr_clip_energygun_multiple" or class == "item_hlvr_clip_energygun" or class == "item_hlvr_grenade_xen" or class == "item_hlvr_prop_battery" or class == "item_hlvr_combine_console_tank") and (thisEntity:GetMass() <= 15 or class == "item_hlvr_prop_battery" or thisEntity:GetModelName() == "models/interaction/anim_interact/hand_crank_wheel/hand_crank_wheel.vmdl") then
+
+    -- We give precedence to these types of item
+    local priority_classes = {
+        "item_hlvr_health_station_vial",
+        "item_hlvr_grenade_frag",
+        "item_healthvial",
+        "item_hlvr_crafting_currency_small",
+        "item_hlvr_crafting_currency_large",
+        "item_hlvr_clip_shotgun_single",
+        "item_hlvr_clip_shotgun_multiple",
+        "item_hlvr_clip_rapidfire",
+        "item_hlvr_clip_energygun_multiple",
+        "item_hlvr_clip_energygun",
+        "item_hlvr_grenade_xen",
+        "item_hlvr_prop_battery",
+    }
+
+    -- Find objects near where the player is looking, and check whether any
+    -- of them is of a priority class
+    local target = nil
+    local nearby = Entities:FindAllInSphere(thisEntity:GetAbsOrigin(), 80)
+    for _, ent in pairs(nearby) do
+        local class = ent:GetClassname()
+        if vlua.find(priority_classes, class) then
+            target = ent
+            break
+        end
+    end
+
+    local player = Entities:GetLocalPlayer()
+    if target ~= nil then
+        -- Does the player have line of sight to the priority target?
+        local eyetrace =
+        {
+            startpos = player:EyePosition();
+            endpos = target:GetAbsOrigin();
+            ignore = player;
+            mask =  33636363;
+        }
+        TraceLine(eyetrace)
+
+        if not eyetrace.hit or eyetrace.enthit ~= target then
+            -- No, so don't pull it
+            target = nil
+        end
+    end
+
+    if target == nil then
+        -- No priority target, just try pulling whatever the player sees
+        target = thisEntity
+    end
+
+    local class = target:GetClassname()
+    local model = target:GetModelName()
+
+    if target:GetName() == "peeled_corridor_objects" or
+       class == "prop_reviver_heart" or
+       vlua.find(ignore_props, model) == nil and
+       player:Attribute_GetIntValue("gravity_gloves", 0) == 1 and
+       (class == "prop_physics" or
+            vlua.find(priority_classes, class) or class == "item_item_crate") and
+       (target:GetMass() <= 15 or
+            class == "item_hlvr_prop_battery" or
+            model == "models/interaction/anim_interact/hand_crank_wheel/hand_crank_wheel.vmdl") then
+
+        local startVector = player:EyePosition()
         local grabbity_glove_catch_params = { ["userid"]=player:GetUserID() }
         FireGameEvent("grabbity_glove_catch", grabbity_glove_catch_params)
         player:StopThink("GGTutorial")
-        local direction = startVector - thisEntity:GetAbsOrigin()
-        thisEntity:ApplyAbsVelocityImpulse(Vector(direction.x * 2, direction.y * 2, direction.z * (115 / direction.z + 1.9)))
+
+        local direction = startVector - target:GetAbsOrigin()
+        target:ApplyAbsVelocityImpulse(Vector(direction.x * 2, direction.y * 2, Clamp(direction.z * 3.8, -400, 400)))
         StartSoundEventFromPosition("Grabbity.HoverPing", startVector)
         StartSoundEventFromPosition("Grabbity.Grab", startVector)
-        local count = 0
 
-        thisEntity:SetThink(function()
+        local count = 0
+        target:SetThink(function()
             local ents = Entities:FindAllInSphere(Entities:GetLocalPlayer():EyePosition(), 60)
-            if vlua.find(ents, thisEntity) then
-                --if not WristPockets_PickUpValuableItem(player, thisEntity) and thisEntity:GetMass() ~= 1 then
-                DoEntFireByInstanceHandle(thisEntity, "Use", "", 0, player, player)
-                if class == "item_hlvr_grenade_frag" then
+            if vlua.find(ents, target) then
+                DoEntFireByInstanceHandle(target, "Use", "", 0, player, player)
+                if target:GetClassname() == "item_hlvr_grenade_frag" then
                     SendToConsole("+use")
-                    thisEntity:SetThink(function()
+                    target:SetThink(function()
                         SendToConsole("-use")
-                        DoEntFireByInstanceHandle(thisEntity, "RunScriptFile", "useextra", 0, player, player)
+                        DoEntFireByInstanceHandle(target, "RunScriptFile", "useextra", 0, player, player)
                     end, "", 0.02)
-                    if vlua.find(thisEntity:GetSequence(), "vr_grenade_arm_") then
-                        DoEntFireByInstanceHandle(thisEntity, "SetTimer", "3", 0, nil, nil)
+                    if vlua.find(target:GetSequence(), "vr_grenade_arm_") then
+                        DoEntFireByInstanceHandle(target, "SetTimer", "3", 0, nil, nil)
                     end
                 end
                 return nil
@@ -96,7 +146,7 @@ local eyetrace =
 TraceLine(eyetrace)
 if eyetrace.hit then
     local useRoutine = 0
-    if eyetrace.enthit and eyetrace.enthit:GetClassname() == "worldent" and class ~= "item_combine_tank_locker" and not vlua.find(class, "hlvr_piano") then
+    if eyetrace.enthit and eyetrace.enthit:GetClassname() == "worldent" then
         GravityGlovePull()
         return
     end
